@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Common/Common.vcxproj" Id="ef94c8f9-cea2-4c07-ac37-f4806e7ce8e4" />
+  <Project Path="LoadBalancer/LoadBalancer.vcxproj" Id="d2b0acbf-b8d8-4797-a27c-a230b8a872f9" />
+</Solution>

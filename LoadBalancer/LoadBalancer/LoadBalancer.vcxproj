@@ -21,12 +21,14 @@
   <ItemGroup>
     <ClInclude Include="config.h" />
     <ClInclude Include="connection_handler.h" />
+    <ClInclude Include="load_balancer.h" />
     <ClInclude Include="queue_manager.h" />
     <ClInclude Include="user_session_table.h" />
     <ClInclude Include="worker_controller.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="connection_handler.c" />
+    <ClCompile Include="load_balancer.c" />
     <ClCompile Include="queue_manager.c" />
     <ClCompile Include="user_session_table.c" />
     <ClCompile Include="worker_controller.c" />

@@ -5,4 +5,6 @@
   </Configurations>
   <Project Path="Common/Common.vcxproj" Id="ef94c8f9-cea2-4c07-ac37-f4806e7ce8e4" />
   <Project Path="LoadBalancer/LoadBalancer.vcxproj" Id="d2b0acbf-b8d8-4797-a27c-a230b8a872f9" />
+  <Project Path="User/User.vcxproj" Id="4b20f2ea-6109-42b8-ae5b-9061d6755a27" />
+  <Project Path="Worker/Worker.vcxproj" Id="90beb96d-60ba-457a-b177-2cb3ddd5b1c6" />
 </Solution>

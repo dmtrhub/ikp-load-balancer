@@ -1,12 +1,22 @@
 #ifndef COMMON_TYPES_H
 #define COMMON_TYPES_H
 
-#include <winsock2.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#define _WINSOCKAPI_  // Prevent inclusion of winsock.h
+
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <stdbool.h>
 
-#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
 // Energy consumption request
 typedef struct {

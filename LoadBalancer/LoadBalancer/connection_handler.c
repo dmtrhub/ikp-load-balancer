@@ -33,28 +33,39 @@ DWORD WINAPI listener_thread(LPVOID lpParam) {
         SOCKET user_socket = accept(listener_socket, (struct sockaddr*)&user_addr, &addr_len);
 
         if (user_socket != INVALID_SOCKET) {
+
+            // Check if queue is full BEFORE receiving - reject immediately if full
+            if (request_queue_occupancy() >= 100.0f) {
+                // Queue 100% full - close socket so User can retry
+                closesocket(user_socket);
+                continue;
+            }
+
             EnergyRequest req;
 
             // Receive request from user
             if (recv_all(user_socket, &req, sizeof(EnergyRequest))) {
-                // Register user session and get session ID
+
+                // For heavy load test: if socketId will be -1 on send side,
+                // we just enqueue without storing session (fire-and-forget)
                 int session_id = user_session_register(user_socket);
 
                 if (session_id != -1) {
                     req.socketId = session_id;
-
-                    // Enqueue request for processing
                     request_queue_enqueue(req);
                     printf("[LISTENER] Received request from User %d (%.2f kW). Session: %d\n",
                         req.userId, req.consumedEnergy, session_id);
                 }
                 else {
-                    printf("[LISTENER] Server full! Rejecting user connection.\n");
+                    // Session table full - still enqueue but mark as no-reply
+                    req.socketId = -1;
+                    request_queue_enqueue(req);
                     closesocket(user_socket);
+                    printf("[LISTENER] Session table full, processing without reply for User %d\n",
+                        req.userId);
                 }
             }
             else {
-                printf("[LISTENER] Failed to receive request from user\n");
                 closesocket(user_socket);
             }
         }
@@ -127,9 +138,11 @@ DWORD WINAPI receiver_thread(LPVOID lpParam) {
             // Receive result from worker
             if (recv_all(worker_socket, &result, sizeof(PriceResult))) {
                 // Enqueue result for sending to user
-                response_queue_enqueue(result);
-                printf("[RECEIVER] Received result from worker (User %d, Cost: %.2f RSD)\n",
-                    result.userId, result.totalCost);
+                if (result.userId != -1) {  // Skip poison pills
+                    response_queue_enqueue(result);
+                    printf("[RECEIVER] Received result from worker (User %d, Cost: %.2f RSD)\n",
+                        result.userId, result.totalCost);
+                }
             }
             else {
                 printf("[RECEIVER] Failed to receive result from worker\n");
@@ -160,6 +173,12 @@ DWORD WINAPI sender_thread(LPVOID lpParam) {
             break;
         }
 
+        // Skip fire-and-forget results (socketId == -1)
+        if (result.socketId == -1) {
+            // No socket to reply to (heavy load test mode)
+            continue;
+        }
+
         // Retrieve user socket using session ID
         SOCKET user_socket = user_session_retrieve(result.socketId);
 
@@ -173,6 +192,7 @@ DWORD WINAPI sender_thread(LPVOID lpParam) {
                 printf("[SENDER] Failed to send result to User %d\n", result.userId);
             }
 
+            // CRITICAL: Close socket to free up session slot immediately
             closesocket(user_socket);
         }
         else {

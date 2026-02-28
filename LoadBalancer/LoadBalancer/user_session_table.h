@@ -16,4 +16,7 @@ SOCKET user_session_retrieve(int session_id);
 
 int user_session_count();
 
+// Cleanup dead/closed sockets to free session slots
+void user_session_cleanup();
+
 #endif

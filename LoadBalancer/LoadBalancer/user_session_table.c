@@ -90,3 +90,34 @@ int user_session_count() {
     LeaveCriticalSection(&session_lock);
     return count;
 }
+
+// Cleanup invalid/closed sockets to free up session slots
+void user_session_cleanup() {
+    EnterCriticalSection(&session_lock);
+
+    int cleaned = 0;
+    for (int i = 0; i < MAX_CONCURRENT_USERS; i++) {
+        if (user_sessions[i] != INVALID_SOCKET) {
+            // For safety: just set all open sockets as inactive if not being used
+            // Better approach: track timeout or explicit cleanup after send
+            // For now: verify socket is not in error state
+            int opt_val;
+            int opt_len = sizeof(opt_val);
+            if (getsockopt(user_sessions[i], SOL_SOCKET, SO_ERROR, (char*)&opt_val, &opt_len) == SOCKET_ERROR
+                || opt_val != 0) {
+                // Socket has error
+                closesocket(user_sessions[i]);
+                user_sessions[i] = INVALID_SOCKET;
+                active_sessions--;
+                cleaned++;
+            }
+        }
+    }
+
+    if (cleaned > 0) {
+        printf("[USER_SESSION] Cleanup: Freed %d dead session slots. Active: %d\n", 
+            cleaned, active_sessions);
+    }
+
+    LeaveCriticalSection(&session_lock);
+}

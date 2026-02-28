@@ -51,4 +51,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="DOCUMENTATION.md" />
+    <None Include="TEST_REPORT.md" />
+    <None Include="IMPLEMENTATION_NOTES.md" />
+    <None Include="FINAL_SUMMARY.md" />
+    <None Include="ODBRANA.md" />
+    <None Include="CHECKLIST_ODBRANA.md" />
+  </ItemGroup>
 </Project>

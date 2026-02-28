@@ -1,6 +1,8 @@
 #include "worker_controller.h"
 #include "queue_manager.h"
+#include "user_session_table.h"
 #include "../Common/network_utils.h"
+#include <windows.h>
 #include <stdio.h>
 #include <stdbool.h>
 
@@ -47,7 +49,11 @@ void spawn_worker() {
 
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_SHOW;  // Show worker window for debugging
     ZeroMemory(&pi, sizeof(pi));
+
+    printf("[WORKER_CONTROLLER] Attempting to spawn: %s\n", WORKER_EXECUTABLE);
 
     // Create worker process
     if (!CreateProcessA(
@@ -56,13 +62,22 @@ void spawn_worker() {
         NULL,           // Process attributes
         NULL,           // Thread attributes
         FALSE,          // Inherit handles
-        CREATE_NO_WINDOW, // Creation flags
+        0,              // Creation flags - show window
         NULL,           // Environment
         NULL,           // Working directory
         &si,
         &pi)) {
 
-        printf("[WORKER_CONTROLLER] Failed to spawn worker. Error: %lu\n", GetLastError());
+        DWORD error = GetLastError();
+        printf("[WORKER_CONTROLLER] ? Failed to spawn worker. Error: %lu (0x%lX)\n", error, error);
+        
+        // Convert error code to message
+        char* errorMsg = NULL;
+        if (error == ERROR_FILE_NOT_FOUND) {
+            printf("[WORKER_CONTROLLER] ERROR: Worker.exe file not found! Make sure Worker.exe is in the same directory as LoadBalancer.exe\n");
+        } else if (error == ERROR_PATH_NOT_FOUND) {
+            printf("[WORKER_CONTROLLER] ERROR: Worker.exe path not found!\n");
+        }
         return;
     }
 
@@ -75,8 +90,8 @@ void spawn_worker() {
     // Close thread handle (we only need process handle)
     CloseHandle(pi.hThread);
 
-    printf("[WORKER_CONTROLLER] Spawned worker #%d. Active: %d/%d\n",
-        worker_id, active_worker_count, MAX_WORKER_PROCESSES);
+    printf("[WORKER_CONTROLLER] ? Spawned worker #%d (PID: %lu). Active: %d/%d\n",
+        worker_id, pi.dwProcessId, active_worker_count, MAX_WORKER_PROCESSES);
 }
 
 void cleanup_dead_workers() {
@@ -154,43 +169,77 @@ void terminate_all_workers() {
 
 DWORD WINAPI monitor_thread(LPVOID lpParam) {
     printf("[MONITOR] Starting queue occupancy monitoring...\n");
+    printf("[MONITOR] SCALE_UP_THRESHOLD: %.0f%%, SCALE_DOWN_THRESHOLD: %.0f%%\n", 
+        (float)SCALE_UP_THRESHOLD, (float)SCALE_DOWN_THRESHOLD);
+    printf("[MONITOR] MAX_QUEUE_SIZE: %d (Scale-up triggers at %d items)\n", 
+        MAX_QUEUE_SIZE, (int)(MAX_QUEUE_SIZE * SCALE_UP_THRESHOLD / 100.0f));
+
+    int check_count = 0;
+    DWORD last_scale_down_time = 0;
+
+    int last_queue_count = -1;
+    int last_worker_count = -1;
 
     while (keep_running) {
         Sleep(MONITOR_CHECK_INTERVAL);
 
         float occupancy = request_queue_occupancy();
+        int queue_count = request_queue_count();
+
+        check_count++;
 
         cleanup_dead_workers();
 
+        // Cleanup dead session slots every 10 checks
+        if (check_count % 10 == 0) {
+            user_session_cleanup();
+        }
+
         EnterCriticalSection(&worker_lock);
+
+		// On queue or worker count change, print status
+        if (queue_count != last_queue_count || active_worker_count != last_worker_count) {
+            printf("[MONITOR] Queue: %d/%d items (%.1f%%) | Workers: %d/%d\n", 
+                queue_count, MAX_QUEUE_SIZE, occupancy, 
+                active_worker_count, MAX_WORKER_PROCESSES);
+
+            last_queue_count = queue_count;
+            last_worker_count = active_worker_count;
+        }
 
         // Scale UP when queue gets too full
         if (occupancy > SCALE_UP_THRESHOLD) {
             if (active_worker_count < MAX_WORKER_PROCESSES) {
-                printf("[MONITOR] Queue at %.1f%%. Spawning new worker...\n", occupancy);
+                printf("[MONITOR] ⚠️  SCALE UP! Queue at %.1f%% (%d items). Spawning new worker...\n", 
+                    occupancy, queue_count);
                 LeaveCriticalSection(&worker_lock);
                 spawn_worker();
+				Sleep(200);  // Give worker time to start and connect before next check
                 EnterCriticalSection(&worker_lock);
             }
             else {
-                printf("[MONITOR] Queue critical (%.1f%%), but max workers reached!\n", occupancy);
+                printf("[MONITOR] ⚠️  Queue CRITICAL (%.1f%%), but max workers (%d) reached!\n", 
+                    occupancy, MAX_WORKER_PROCESSES);
             }
         }
 
-        // Scale DOWN when queue gets too empty
+		// Scale DOWN - only one worker at a time and only if occupancy is low for a while
         else if (occupancy < SCALE_DOWN_THRESHOLD && active_worker_count > 1) {
-            printf("[MONITOR] Queue at %.1f%%. Terminating one worker...\n", occupancy);
+            DWORD now = GetTickCount();
 
-            EnergyRequest poison_pill = { 0 };
-            poison_pill.userId = -1;
-            LeaveCriticalSection(&worker_lock);
-            request_queue_enqueue(poison_pill);
-            EnterCriticalSection(&worker_lock);
-        }
+			// Shut down one worker if it's been a while since the last scale down (to avoid rapid flapping)
+            if (now - last_scale_down_time >= WORKER_SHUTDOWN_INTERVAL) {
+                printf("[MONITOR] 🔽 SCALE DOWN: Queue at %.1f%%. Terminating one worker (interval: %dms)...\n",
+                    occupancy, WORKER_SHUTDOWN_INTERVAL);
 
-        else if (occupancy > 0 && occupancy <= SCALE_UP_THRESHOLD &&
-            occupancy >= SCALE_DOWN_THRESHOLD) {
-            printf("[MONITOR] Queue at %.1f%% (stable)\n", occupancy);
+                EnergyRequest poison_pill = { 0 };
+                poison_pill.userId = -1;
+                LeaveCriticalSection(&worker_lock);
+                request_queue_enqueue(poison_pill);
+                EnterCriticalSection(&worker_lock);
+
+                last_scale_down_time = now;
+            }
         }
 
         LeaveCriticalSection(&worker_lock);

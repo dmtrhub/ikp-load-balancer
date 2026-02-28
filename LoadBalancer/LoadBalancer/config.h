@@ -1,4 +1,3 @@
-#pragma once
 #ifndef CONFIG_H
 #define CONFIG_H
 
@@ -9,7 +8,7 @@
 #define REQUEST_DISTRIBUTOR_PORT 5062 // Requests to workers
 
 // ===== QUEUE CONFIGURATION =====
-#define MAX_QUEUE_SIZE 1000
+#define MAX_QUEUE_SIZE 100
 #define SCALE_UP_THRESHOLD 70       // % when to spawn new workers
 #define SCALE_DOWN_THRESHOLD 30     // % when to kill workers
 #define MONITOR_CHECK_INTERVAL 100  // ms between occupancy checks

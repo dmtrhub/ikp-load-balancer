@@ -1,3 +1,4 @@
+#include "../Common/network_utils.h"
 #include <windows.h>
 #include <stdio.h>
 #include <conio.h>
@@ -7,7 +8,6 @@
 #include "worker_controller.h"
 #include "queue_manager.h"
 #include "user_session_table.h"
-#include "../Common/network_utils.h"
 
 // Global shutdown flag - used by all threads
 volatile bool keep_running = true;
@@ -172,8 +172,7 @@ int main(int argc, char* argv[]) {
     response_queue_destroy();
 
     // Cleanup network
-    SOCKET sockets[] = { };
-    cleanup_networks(sockets, 0);
+    cleanup_networks(NULL, 0);
 
     printf("\n========================================\n");
     printf("Load Balancer shutdown complete.\n");

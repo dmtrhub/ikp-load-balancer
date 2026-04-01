@@ -4,6 +4,7 @@
 #include "../Common/network_utils.h"
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 // Global shutdown flag
 extern volatile bool keep_running;
@@ -26,6 +27,10 @@ DWORD WINAPI listener_thread(LPVOID lpParam) {
 
     printf("[LISTENER] Listening on port %d for user requests...\n", LISTENER_PORT);
 
+    unsigned long long accepted_count = 0;
+    unsigned long long rejected_count = 0;
+    unsigned long long no_reply_count = 0;
+
     while (keep_running) {
         struct sockaddr_in user_addr;
         int addr_len = sizeof(user_addr);
@@ -34,10 +39,12 @@ DWORD WINAPI listener_thread(LPVOID lpParam) {
 
         if (user_socket != INVALID_SOCKET) {
 
-            // Check if queue is full BEFORE receiving - reject immediately if full
-            if (request_queue_occupancy() >= 100.0f) {
-                // Queue 100% full - close socket so User can retry
+            // Backpressure: reject if queue >= 80% full (don't wait until 100%)
+            // This prevents listener from flooding the queue and helps system stay balanced
+            int current_queue = request_queue_count();
+            if (current_queue >= (int)(MAX_QUEUE_SIZE * 0.80f)) {
                 closesocket(user_socket);
+                rejected_count++;
                 continue;
             }
 
@@ -46,24 +53,28 @@ DWORD WINAPI listener_thread(LPVOID lpParam) {
             // Receive request from user
             if (recv_all(user_socket, &req, sizeof(EnergyRequest))) {
 
-                // For heavy load test: if socketId will be -1 on send side,
-                // we just enqueue without storing session (fire-and-forget)
-                int session_id = user_session_register(user_socket);
-
-                if (session_id != -1) {
-                    req.socketId = session_id;
+                // Fire-and-forget mode for large tests (client explicitly sets socketId = -1)
+                if (req.socketId == -1) {
                     request_queue_enqueue(req);
-                    printf("[LISTENER] Received request from User %d (%.2f kW). Session: %d\n",
-                        req.userId, req.consumedEnergy, session_id);
+                    req.socketId = -1;
+                    closesocket(user_socket);
+                    accepted_count++;
+                    no_reply_count++;
+                    continue;
                 }
-                else {
-                    // Session table full - still enqueue but mark as no-reply
+
+                int session_id = user_session_register(user_socket);
+                if (session_id == -1) {
                     req.socketId = -1;
                     request_queue_enqueue(req);
                     closesocket(user_socket);
-                    printf("[LISTENER] Session table full, processing without reply for User %d\n",
-                        req.userId);
+                    no_reply_count++;
                 }
+                else {
+                    req.socketId = session_id;
+                    request_queue_enqueue(req);
+                }
+                accepted_count++;
             }
             else {
                 closesocket(user_socket);
@@ -72,6 +83,7 @@ DWORD WINAPI listener_thread(LPVOID lpParam) {
     }
 
     closesocket(listener_socket);
+    printf("[LISTENER] Stats: accepted=%llu rejected=%llu no_reply=%llu\n", accepted_count, rejected_count, no_reply_count);
     printf("[LISTENER] Shutdown complete.\n");
     return 0;
 }
@@ -98,11 +110,7 @@ DWORD WINAPI distributor_thread(LPVOID lpParam) {
             EnergyRequest req = request_queue_dequeue();
 
             // Send request to worker
-            if (send_all(worker_socket, &req, sizeof(EnergyRequest))) {
-                printf("[DISTRIBUTOR] Sent request (User %d) to worker\n", req.userId);
-            }
-            else {
-                printf("[DISTRIBUTOR] Failed to send request to worker\n");
+            if (!send_all(worker_socket, &req, sizeof(EnergyRequest))) {
                 // Re-enqueue if send failed (best effort)
                 request_queue_enqueue(req);
             }
@@ -116,8 +124,32 @@ DWORD WINAPI distributor_thread(LPVOID lpParam) {
     return 0;
 }
 
+// ===== RECEIVER HANDLER THREAD =====
+// Handles a single worker result asynchronously
+
+DWORD WINAPI receiver_handler_thread(LPVOID lpParam) {
+    SOCKET worker_socket = (SOCKET)(intptr_t)lpParam;
+    PriceResult result;
+
+    // Receive result from worker
+    if (recv_all(worker_socket, &result, sizeof(PriceResult))) {
+        // Enqueue result for sending to user
+        if (result.userId != -1) {  // Skip poison pills
+            response_queue_enqueue(result);
+        }
+    } else {
+        //printf("[RECEIVER] Handler: Failed to receive result\n");
+    }
+
+    closesocket(worker_socket);
+    return 0;
+}
+
 // ===== RECEIVER THREAD =====
-// Receives calculated results from workers
+// Receives calculated results from workers (spawns handler thread per connection)
+
+static long long handler_threads_created = 0;
+static long long handler_fallback_count = 0;
 
 DWORD WINAPI receiver_thread(LPVOID lpParam) {
     receiver_socket = setup_server_socket(RESULT_RECEIVER_PORT);
@@ -133,27 +165,37 @@ DWORD WINAPI receiver_thread(LPVOID lpParam) {
         SOCKET worker_socket = accept(receiver_socket, NULL, NULL);
 
         if (worker_socket != INVALID_SOCKET) {
-            PriceResult result;
+            // Spawn async handler thread for this worker result
+            HANDLE handler_thread = CreateThread(
+                NULL,
+                0,
+                receiver_handler_thread,
+                (LPVOID)(intptr_t)worker_socket,
+                0,
+                NULL);
 
-            // Receive result from worker
-            if (recv_all(worker_socket, &result, sizeof(PriceResult))) {
-                // Enqueue result for sending to user
-                if (result.userId != -1) {  // Skip poison pills
-                    response_queue_enqueue(result);
-                    printf("[RECEIVER] Received result from worker (User %d, Cost: %.2f RSD)\n",
-                        result.userId, result.totalCost);
+            if (handler_thread != NULL) {
+                // Don't wait - immediately loop back to accept next connection
+                // Thread will close socket and clean up
+                handler_threads_created++;
+                CloseHandle(handler_thread);
+            } else {
+                // If thread creation fails, handle directly as fallback
+                handler_fallback_count++;
+                PriceResult result;
+                if (recv_all(worker_socket, &result, sizeof(PriceResult))) {
+                    if (result.userId != -1) {
+                        response_queue_enqueue(result);
+                    }
                 }
+                closesocket(worker_socket);
             }
-            else {
-                printf("[RECEIVER] Failed to receive result from worker\n");
-            }
-
-            closesocket(worker_socket);
         }
     }
 
     closesocket(receiver_socket);
-    printf("[RECEIVER] Shutdown complete.\n");
+    printf("[RECEIVER] Shutdown complete. Threads created: %lld, Fallbacks: %lld\n", 
+        handler_threads_created, handler_fallback_count);
     return 0;
 }
 
@@ -184,19 +226,13 @@ DWORD WINAPI sender_thread(LPVOID lpParam) {
 
         if (user_socket != INVALID_SOCKET) {
             // Send result to user
-            if (send_all(user_socket, &result, sizeof(PriceResult))) {
-                printf("[SENDER] Sent result to User %d (Cost: %.2f RSD)\n",
-                    result.userId, result.totalCost);
-            }
-            else {
-                printf("[SENDER] Failed to send result to User %d\n", result.userId);
-            }
+            send_all(user_socket, &result, sizeof(PriceResult));
 
             // CRITICAL: Close socket to free up session slot immediately
             closesocket(user_socket);
         }
         else {
-            printf("[SENDER] WARNING: User socket not found for session %d\n", result.socketId);
+            // Session already closed or fire-and-forget request
         }
     }
 

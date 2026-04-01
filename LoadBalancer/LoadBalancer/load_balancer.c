@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Spawn initial worker process
+    // Spawn initial worker
     printf("[MAIN] Spawning initial worker...\n");
     spawn_worker();
 

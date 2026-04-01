@@ -34,9 +34,6 @@ static float calculate_cost(float consumption_kw) {
 
 // Process a single request from Load Balancer
 static void process_request(EnergyRequest request) {
-	printf("[WORKER] Processing request from User %d (%.2f kW)\n",
-		request.userId, request.consumedEnergy);
-
 	// Calculate cost
 	float total_cost = calculate_cost(request.consumedEnergy);
 
@@ -68,9 +65,6 @@ static void process_request(EnergyRequest request) {
 	.totalCost = total_cost
 	};
 
-	printf("[WORKER] Calculated: Green=%.2f, Blue=%.2f, Red=%.2f, Total=%.2f RSD\n",
-		green_energy, blue_energy, red_energy, total_cost);
-
 	// Send result back to Load Balancer on port 5061
 	SOCKET result_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	struct sockaddr_in lb_addr;
@@ -78,27 +72,22 @@ static void process_request(EnergyRequest request) {
 	lb_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	lb_addr.sin_port = htons(5061);  // RESULT_RECEIVER_PORT
 
-	// Retry sending with exponential backoff
+	// Quick connect with minimal delay (avoid exponential backoff bottleneck)
 	int retry_count = 0;
-	int retry_delay = 50;
-	int max_retries = 20;
+	int max_retries = 5;
 
 	while (connect(result_socket, (struct sockaddr*)&lb_addr, sizeof(lb_addr)) != 0) {
 		if (retry_count++ >= max_retries) {
-			printf("[WORKER] ERROR: Could not connect to Load Balancer on port 5061 after %d retries\n", max_retries);
+			printf("[WORKER] ERROR: Could not connect to Load Balancer on port 5061\n");
 			closesocket(result_socket);
-			return;  // Resign from sending result
+			return;  // Resign from sending result - unblocks worker for next task
 		}
-		Sleep(retry_delay);
-		retry_delay = (retry_delay * 2 > 2000) ? 2000 : (retry_delay * 2);
+		Sleep(10);  // Fixed short delay - no exponential backoff
 		closesocket(result_socket);
 		result_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	}
 
-	if (send_all(result_socket, &result, sizeof(PriceResult))) {
-		printf("[WORKER] Result sent to Load Balancer\n");
-	}
-	else {
+    if (!send_all(result_socket, &result, sizeof(PriceResult))) {
 		printf("[WORKER] ERROR: Failed to send result\n");
 	}
 
@@ -148,7 +137,7 @@ int main(int argc, char* argv[]) {
 		pricing.blueBorder, pricing.redPrice);
 
 	// Step 2: Connect to request distributor and process jobs (port 5062)
-	printf("[WORKER] Connecting to request distributor (port 5062)...\n");
+  printf("[WORKER] Ready for jobs on port 5062.\n");
 
 	bool running = true;
 	while (running) {

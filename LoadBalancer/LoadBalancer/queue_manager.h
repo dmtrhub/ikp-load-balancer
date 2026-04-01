@@ -21,6 +21,9 @@ float request_queue_occupancy();
 // Get current count
 int request_queue_count();
 
+// Get queue stats for autoscaling diagnostics
+void request_queue_get_stats(int* current_count, int* peak_count, long long* total_enqueued, long long* total_dequeued);
+
 
 // ===== RESPONSE QUEUE (Worker results) =====
 
@@ -35,5 +38,8 @@ PriceResult response_queue_dequeue();
 
 // Get current count
 int response_queue_count();
+
+// Get occupancy percentage
+float response_queue_occupancy();
 
 #endif

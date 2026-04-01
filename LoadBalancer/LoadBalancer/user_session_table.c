@@ -52,10 +52,6 @@ int user_session_register(SOCKET socket) {
     if (session_id == -1) {
         printf("[USER_SESSION] WARNING: No available slots! Max capacity reached.\n");
     }
-    else {
-        printf("[USER_SESSION] Registered user #%d. Active sessions: %d\n",
-            session_id, active_sessions);
-    }
 
     LeaveCriticalSection(&session_lock);
 
@@ -73,8 +69,6 @@ SOCKET user_session_retrieve(int session_id) {
 
         if (socket != INVALID_SOCKET) {
             active_sessions--;
-            printf("[USER_SESSION] Retrieved socket for user #%d. Active: %d\n",
-                session_id, active_sessions);
         }
     }
 

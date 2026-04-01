@@ -72,6 +72,12 @@ SOCKET setup_server_socket(int port) {
 	char reuse = 1;
 	setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
+	// Increase socket buffer sizes to handle bursts better
+	int send_buf = 256 * 1024;  // 256 KB send buffer
+	int recv_buf = 256 * 1024;  // 256 KB receive buffer
+	setsockopt(listenSock, SOL_SOCKET, SO_SNDBUF, (char*)&send_buf, sizeof(send_buf));
+	setsockopt(listenSock, SOL_SOCKET, SO_RCVBUF, (char*)&recv_buf, sizeof(recv_buf));
+
 	struct sockaddr_in addr;
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);

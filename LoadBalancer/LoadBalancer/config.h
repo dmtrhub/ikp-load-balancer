@@ -8,16 +8,21 @@
 #define REQUEST_DISTRIBUTOR_PORT 5062 // Requests to workers
 
 // ===== QUEUE CONFIGURATION =====
-#define MAX_QUEUE_SIZE 100
-#define SCALE_UP_THRESHOLD 70       // % when to spawn new workers
-#define SCALE_DOWN_THRESHOLD 30     // % when to kill workers
-#define MONITOR_CHECK_INTERVAL 100  // ms between occupancy checks
-#define WORKER_SHUTDOWN_INTERVAL 1000 // ms between worker shutdowns
+#define MAX_QUEUE_SIZE 200
+#define RESPONSE_QUEUE_SIZE 200
+#define SCALE_UP_THRESHOLD 75        // Spawn when queue > 75%
+#define SCALE_DOWN_THRESHOLD 25      // Consider scale-down when queue < 25%
+#define MONITOR_CHECK_INTERVAL 150
+#define WORKER_SHUTDOWN_INTERVAL 3000 // Wait 3s before actually scaling down (prevents flapping)
 
 // ===== WORKER MANAGEMENT =====
-#define MAX_WORKER_PROCESSES 20
+#define MAX_WORKER_PROCESSES 24      // Dobar balans (umesto 15, ali ne preuobiman kao 32)
 #define MAX_CONCURRENT_USERS 10000
 #define WORKER_EXECUTABLE "Worker.exe"
+
+// ===== WORKER SPAWN CONTROL =====
+#define MIN_SPAWN_INTERVAL_MS 500    // Sporiji spawn (daj vremena da vidiš da li je potreban)
+#define MAX_SPAWN_PER_CHECK 2
 
 // ===== TIMEOUTS =====
 #define SOCKET_TIMEOUT_MS 5000

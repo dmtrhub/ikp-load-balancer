@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 
 // Worker process tracking
 static HANDLE active_workers[MAX_WORKER_PROCESSES];
@@ -50,10 +51,10 @@ void spawn_worker() {
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_SHOW;  // Show worker window for debugging
+    si.wShowWindow = SW_HIDE;
     ZeroMemory(&pi, sizeof(pi));
 
-    printf("[WORKER_CONTROLLER] Attempting to spawn: %s\n", WORKER_EXECUTABLE);
+    printf("[WORKER_CONTROLLER] Spawning worker: %s\n", WORKER_EXECUTABLE);
 
     // Create worker process
     if (!CreateProcessA(
@@ -69,10 +70,8 @@ void spawn_worker() {
         &pi)) {
 
         DWORD error = GetLastError();
-        printf("[WORKER_CONTROLLER] ? Failed to spawn worker. Error: %lu (0x%lX)\n", error, error);
+        printf("[WORKER_CONTROLLER] Failed to spawn worker. Error: %lu (0x%lX)\n", error, error);
         
-        // Convert error code to message
-        char* errorMsg = NULL;
         if (error == ERROR_FILE_NOT_FOUND) {
             printf("[WORKER_CONTROLLER] ERROR: Worker.exe file not found! Make sure Worker.exe is in the same directory as LoadBalancer.exe\n");
         } else if (error == ERROR_PATH_NOT_FOUND) {
@@ -90,7 +89,7 @@ void spawn_worker() {
     // Close thread handle (we only need process handle)
     CloseHandle(pi.hThread);
 
-    printf("[WORKER_CONTROLLER] ? Spawned worker #%d (PID: %lu). Active: %d/%d\n",
+    printf("[WORKER_CONTROLLER] Spawned worker #%d (PID: %lu). Active: %d/%d\n",
         worker_id, pi.dwProcessId, active_worker_count, MAX_WORKER_PROCESSES);
 }
 
@@ -168,85 +167,113 @@ void terminate_all_workers() {
 // ===== MONITORING THREAD =====
 
 DWORD WINAPI monitor_thread(LPVOID lpParam) {
-    printf("[MONITOR] Starting queue occupancy monitoring...\n");
-    printf("[MONITOR] SCALE_UP_THRESHOLD: %.0f%%, SCALE_DOWN_THRESHOLD: %.0f%%\n", 
-        (float)SCALE_UP_THRESHOLD, (float)SCALE_DOWN_THRESHOLD);
-    printf("[MONITOR] MAX_QUEUE_SIZE: %d (Scale-up triggers at %d items)\n", 
-        MAX_QUEUE_SIZE, (int)(MAX_QUEUE_SIZE * SCALE_UP_THRESHOLD / 100.0f));
+	printf("[MONITOR] Starting queue occupancy monitoring...\n");
+	printf("[MONITOR] SCALE_UP_THRESHOLD: %.0f%%, SCALE_DOWN_THRESHOLD: %.0f%%\n", 
+		(float)SCALE_UP_THRESHOLD, (float)SCALE_DOWN_THRESHOLD);
+	printf("[MONITOR] MAX_QUEUE_SIZE: %d (Scale-up triggers at %d items)\n", 
+		MAX_QUEUE_SIZE, (int)(MAX_QUEUE_SIZE * SCALE_UP_THRESHOLD / 100.0f));
 
-    int check_count = 0;
-    DWORD last_scale_down_time = 0;
+	int check_count = 0;
+	DWORD last_scale_down_time = 0;
+	DWORD last_spawn_time = 0;
+	DWORD last_critical_log_time = 0;
+	DWORD last_status_log_time = 0;
+	bool was_critical = false;
 
-    int last_queue_count = -1;
-    int last_worker_count = -1;
+	int last_worker_count = -1;
 
-    while (keep_running) {
-        Sleep(MONITOR_CHECK_INTERVAL);
+	while (keep_running) {
+		Sleep(MONITOR_CHECK_INTERVAL);
 
-        float occupancy = request_queue_occupancy();
-        int queue_count = request_queue_count();
+		int queue_count = 0;
+		int peak_count = 0;
+		long long total_enqueued = 0;
+		long long total_dequeued = 0;
+		request_queue_get_stats(&queue_count, &peak_count, &total_enqueued, &total_dequeued);
+		float occupancy = ((float)queue_count / (float)MAX_QUEUE_SIZE) * 100.0f;
+		float peak_occupancy = ((float)peak_count / (float)MAX_QUEUE_SIZE) * 100.0f;
 
-        check_count++;
+		DWORD now = GetTickCount();
+		check_count++;
 
-        cleanup_dead_workers();
+		cleanup_dead_workers();
 
-        // Cleanup dead session slots every 10 checks
-        if (check_count % 10 == 0) {
-            user_session_cleanup();
-        }
+		// Session cleanup is intentionally not periodic because active sockets are short-lived
 
-        EnterCriticalSection(&worker_lock);
+		EnterCriticalSection(&worker_lock);
 
-		// On queue or worker count change, print status
-        if (queue_count != last_queue_count || active_worker_count != last_worker_count) {
-            printf("[MONITOR] Queue: %d/%d items (%.1f%%) | Workers: %d/%d\n", 
-                queue_count, MAX_QUEUE_SIZE, occupancy, 
-                active_worker_count, MAX_WORKER_PROCESSES);
+		// Print status only on worker-count changes or periodic heartbeat (max every 3s)
+		if (active_worker_count != last_worker_count || now - last_status_log_time >= 3000) {
+			printf("[MONITOR] Queue: %d/%d items (%.1f%%) | Workers: %d/%d\n", 
+				queue_count, MAX_QUEUE_SIZE, occupancy, 
+				active_worker_count, MAX_WORKER_PROCESSES);
 
-            last_queue_count = queue_count;
-            last_worker_count = active_worker_count;
-        }
+			last_worker_count = active_worker_count;
+			last_status_log_time = now;
+		}
 
-        // Scale UP when queue gets too full
-        if (occupancy > SCALE_UP_THRESHOLD) {
-            if (active_worker_count < MAX_WORKER_PROCESSES) {
-                printf("[MONITOR] ⚠️  SCALE UP! Queue at %.1f%% (%d items). Spawning new worker...\n", 
-                    occupancy, queue_count);
-                LeaveCriticalSection(&worker_lock);
-                spawn_worker();
-				Sleep(200);  // Give worker time to start and connect before next check
-                EnterCriticalSection(&worker_lock);
-            }
-            else {
-                printf("[MONITOR] ⚠️  Queue CRITICAL (%.1f%%), but max workers (%d) reached!\n", 
-                    occupancy, MAX_WORKER_PROCESSES);
-            }
-        }
+		bool is_critical = (occupancy > SCALE_UP_THRESHOLD && active_worker_count >= MAX_WORKER_PROCESSES);
 
-		// Scale DOWN - only one worker at a time and only if occupancy is low for a while
-        else if (occupancy < SCALE_DOWN_THRESHOLD && active_worker_count > 1) {
-            DWORD now = GetTickCount();
+		// Scale UP when queue gets too full - use ADAPTIVE spawn rate
+		if (occupancy > SCALE_UP_THRESHOLD || peak_occupancy > SCALE_UP_THRESHOLD) {
+			if (active_worker_count < MAX_WORKER_PROCESSES) {
+				was_critical = false;
+
+				// Adaptive spawn interval: spawn faster if queue is very full
+				int spawn_interval = MIN_SPAWN_INTERVAL_MS;
+				if (occupancy > 90.0f) {
+					spawn_interval = 100;  // Spawn faster if queue > 90%
+				} else if (occupancy > 80.0f) {
+					spawn_interval = 150;
+				}
+
+				if (now - last_spawn_time >= spawn_interval) {
+					printf("[MONITOR] SCALE UP: queue %.1f%% (peak %.1f%%), spawning worker.\n", occupancy, peak_occupancy);
+					LeaveCriticalSection(&worker_lock);
+					spawn_worker();
+					EnterCriticalSection(&worker_lock);
+					last_spawn_time = now;
+				}
+			}
+			else {
+				// Log critical state only on transitions or after 3s timeout
+				if (!was_critical || now - last_critical_log_time >= 3000) {
+					printf("[MONITOR] Queue critical (%.1f%%), max workers (%d) reached.\n",
+						occupancy, MAX_WORKER_PROCESSES);
+					last_critical_log_time = now;
+					was_critical = true;
+				}
+			}
+		}
+
+		// Scale DOWN - only one worker at a time and only if occupancy is low for a sustained period
+		else if (occupancy < SCALE_DOWN_THRESHOLD && active_worker_count > 1) {
+			was_critical = false;
 
 			// Shut down one worker if it's been a while since the last scale down (to avoid rapid flapping)
-            if (now - last_scale_down_time >= WORKER_SHUTDOWN_INTERVAL) {
-                printf("[MONITOR] 🔽 SCALE DOWN: Queue at %.1f%%. Terminating one worker (interval: %dms)...\n",
-                    occupancy, WORKER_SHUTDOWN_INTERVAL);
+			// AND peak occupancy is also low (meaning sustained low load, not temporary dip)
+			if (now - last_scale_down_time >= WORKER_SHUTDOWN_INTERVAL && peak_occupancy < SCALE_DOWN_THRESHOLD) {
+				printf("[MONITOR] SCALE DOWN: queue %.1f%% (peak %.1f%%), terminating one worker.\n", 
+					occupancy, peak_occupancy);
 
-                EnergyRequest poison_pill = { 0 };
-                poison_pill.userId = -1;
-                LeaveCriticalSection(&worker_lock);
-                request_queue_enqueue(poison_pill);
-                EnterCriticalSection(&worker_lock);
+				EnergyRequest poison_pill = { 0 };
+				poison_pill.userId = -1;
+				LeaveCriticalSection(&worker_lock);
+				request_queue_enqueue(poison_pill);
+				EnterCriticalSection(&worker_lock);
 
-                last_scale_down_time = now;
-            }
-        }
+				last_scale_down_time = now;
+			}
+		}
+		else {
+			was_critical = false;
+		}
 
-        LeaveCriticalSection(&worker_lock);
-    }
+		LeaveCriticalSection(&worker_lock);
+	}
 
-    printf("[MONITOR] Shutdown complete.\n");
-    return 0;
+	printf("[MONITOR] Shutdown complete.\n");
+	return 0;
 }
 
 // ===== PRICE DISTRIBUTOR THREAD =====

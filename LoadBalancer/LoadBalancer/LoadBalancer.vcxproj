@@ -38,14 +38,6 @@
       <Project>{ef94c8f9-cea2-4c07-ac37-f4806e7ce8e4}</Project>
     </ProjectReference>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="CHECKLIST_ODBRANA.md" />
-    <None Include="DOCUMENTATION.md" />
-    <None Include="FINAL_SUMMARY.md" />
-    <None Include="IMPLEMENTATION_NOTES.md" />
-    <None Include="ODBRANA.md" />
-    <None Include="TEST_REPORT.md" />
-  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>

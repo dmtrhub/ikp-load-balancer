@@ -20,7 +20,7 @@ static void test_single_request(int user_id, float energy_kw) {
 	// Send energy request
 	EnergyRequest request = {
 		.userId = user_id,
-		.socketId = -1,  // Will be assigned by LB
+      .socketId = 0,   // LB will replace with session id
 		.consumedEnergy = energy_kw
 	};
 
@@ -62,7 +62,6 @@ static void test_small_load() {
 
 	for (int i = 0; i < 5; i++) {
 		test_single_request(i + 1, test_consumptions[i]);
-		Sleep(500);  // Small delay between requests
 	}
 
 	printf("Small load test completed!\n\n");
@@ -80,73 +79,12 @@ static void test_medium_load() {
 		// Random energy consumption between 50 and 4000 kW
 		float energy = 50.0f + (rand() % 3950);
 		test_single_request(i + 1, energy);
-		Sleep(50);  // Small delay
 	}
 
 	printf("Medium load test completed!\n\n");
 }
 
-// Test mode 3: Heavy load (10000 requests) - fire and forget version
-static void test_heavy_load() {
-	printf("\n========================================\n");
-	printf("   HEAVY LOAD TEST (~10000 requests)\n");
-	printf("========================================\n\n");
-
-	int num_requests = 10000;
-	int sent_ok = 0;
-	int retries = 0;
-
-	printf("Sending %d requests (fire-and-forget mode, no result waiting)...\n\n", num_requests);
-
-	for (int i = 0; i < num_requests; i++) {
-		int user_id = i + 1;
-		float energy = 50.0f + (rand() % 3950);
-
-		// Retry loop - retry if LB queue is full
-		while (1) {
-			SOCKET user_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-			struct sockaddr_in lb_addr;
-			lb_addr.sin_family = AF_INET;
-			lb_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-			lb_addr.sin_port = htons(5059);
-
-			if (connect(user_socket, (struct sockaddr*)&lb_addr, sizeof(lb_addr)) != 0) {
-				// LB queue full or unavailable - wait and retry
-				closesocket(user_socket);
-				retries++;
-				Sleep(20);
-				continue;
-			}
-
-			// Send energy request
-			EnergyRequest request = {
-				.userId = user_id,
-				.socketId = -1,
-				.consumedEnergy = energy
-			};
-
-			send_all(user_socket, &request, sizeof(EnergyRequest));
-
-			// Fire-and-forget: close immediately, do NOT wait for result
-			closesocket(user_socket);
-			sent_ok++;
-			break;
-		}
-
-		// Progress every 1000 requests
-		if ((i + 1) % 1000 == 0) {
-			printf("[HEAVY TEST] Progress: %d/%d sent (retries: %d)\n",
-				i + 1, num_requests, retries);
-		}
-
-		Sleep(1);  // 1ms delay
-	}
-
-	printf("\n[HEAVY TEST] Completed! Sent: %d, Total retries: %d\n", sent_ok, retries);
-	printf("Heavy load test completed!\n\n");
-}
-
-// Stress test for demonstrating auto-scaling under extreme load
+// Test mode 3: Stress load for demonstrating auto-scaling under extreme load
 // Sending 10000 concurrent requests with NO DELAYS to show how LB auto-scales and handles overload gracefully
 typedef struct {
 	int user_id;
@@ -185,12 +123,7 @@ DWORD WINAPI stress_worker_thread(LPVOID lpParam) {
 
 	send_all(user_socket, &request, sizeof(EnergyRequest));
 
-	// Wait for result
-	PriceResult result;
-	if (recv_all(user_socket, &result, sizeof(PriceResult))) {
-		// Accept result but do not print to avoid console flooding
-	}
-
+  // Fire-and-forget in stress mode (allowed by assignment for large tests)
 	closesocket(user_socket);
 	return 0;
 }
@@ -255,7 +188,7 @@ static void test_stress_load() {
 	QueryPerformanceCounter(&end);
 	double elapsed = (double)(end.QuadPart - start.QuadPart) / freq.QuadPart;
 
-	printf("\n✅ Stress test completed in %.2f seconds!\n", elapsed);
+	printf("\nStress test completed in %.2f seconds!\n", elapsed);
 	printf("Throughput: %.0f req/sec\n\n", num_requests / elapsed);
 }
 
@@ -273,9 +206,8 @@ int main(int argc, char* argv[]) {
 	printf("Choose test mode:\n");
 	printf("1 = Small load (5 requests)\n");
 	printf("2 = Medium load (100 requests)\n");
-	printf("3 = Heavy load (~10000 requests)\n");
-	printf("4 = STRESS load (10000 concurrent, NO DELAYS - shows auto-scaling)\n\n");
-	printf("Enter choice (1-4): ");
+	printf("3 = STRESS load (10000 concurrent, NO DELAYS - shows auto-scaling)\n\n");
+	printf("Enter choice (1-3): ");
 
 	int choice;
 	scanf_s("%d", &choice);
@@ -288,9 +220,6 @@ int main(int argc, char* argv[]) {
 		test_medium_load();
 		break;
 	case 3:
-		test_heavy_load();
-		break;
-	case 4:
 		test_stress_load();
 		break;
 	default:

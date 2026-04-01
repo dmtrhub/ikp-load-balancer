@@ -158,14 +158,14 @@ All thresholds and timeouts in `LoadBalancer/config.h`:
 ## Screenshots
 
 ### System
-- [Design diagram](docs/screenshots/system-design.png)
-- [LoadBalancer startup and initialization](docs/screenshots/lb-startup.png)
-- [Monitor autoscaling logs (scale up/down)](docs/screenshots/lb-autoscaling.png)
-- [Task manager - workers](docs/screenshots/task-manager.png)
+- ![Design diagram](docs/screenshots/system-design.png)
+- ![LoadBalancer startup and initialization](docs/screenshots/lb-startup.png)
+- ![Monitor autoscaling logs (scale up/down)](docs/screenshots/lb-autoscaling.png)
+- ![Task manager - workers](docs/screenshots/task-manager.png)
 
 ### Test Results
-- [Test - Small load (5 requests](docs/screenshots/user-small-test.png)
-- [Test - Stress load (10K concurrent)](docs/screenshots/user-stress-test.png)
+- ![Test - Small load (5 requests)](docs/screenshots/user-small-test.png)
+- ![Test - Stress load (10K concurrent)](docs/screenshots/user-stress-test.png)
 
 ---
 

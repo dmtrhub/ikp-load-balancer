@@ -161,6 +161,7 @@ All thresholds and timeouts in `LoadBalancer/config.h`:
 - [Design diagram](docs/screenshots/system-design.png)
 - [LoadBalancer startup and initialization](docs/screenshots/lb-startup.png)
 - [Monitor autoscaling logs (scale up/down)](docs/screenshots/lb-autoscaling.png)
+- [Task manager - workers](docs/screenshots/task-manager.png)
 
 ### Test Results
 - [Test - Small load (5 requests](docs/screenshots/user-small-test.png)

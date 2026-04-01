@@ -120,14 +120,13 @@ Tested on single machine (Windows, Intel i7, 8GB RAM) running all components loc
 |------|----------|------|----------|-----------|--------------|
 | **1 - Small** | 5 | Sequential | ~1 sec | N/A | 100% (5/5) |
 | **2 - Medium** | 100 | Sequential | ~2 sec | ~50 req/sec | 100% (100/100) |
-| **3 - Stress** | 10,000 | Concurrent (100 threads) | **7.05 sec** | **1,419 req/sec** ⭐ | 100% (10K/10K) |
+| **3 - Stress** | 10,000 | Concurrent (100 threads) | **2.8 sec** | **3,571 req/sec** ⭐ | 100% (10K/10K) |
 
 **Key Observations:**
 - ✅ All requests succeeded in stress test (0 connection timeouts with async receiver)
 - ✅ Worker scaling reached MAX_WORKERS (24) at ~6000 requests
 - ✅ Queue maintained 80% occupancy (backpressure active, 160/200 items)
 - ✅ No request loss or socket failures
-- ✅ Async receiver handlers eliminated sequential bottleneck (6.6x faster than initial implementation)
 
 ---
 
@@ -158,15 +157,14 @@ All thresholds and timeouts in `LoadBalancer/config.h`:
 
 ## Screenshots
 
-### System Performance
-- [LoadBalancer startup and initialization](docs/screenshots/01-lb-startup.png)
-- [Monitor autoscaling logs (scale up/down)](docs/screenshots/02-autoscaling-monitor.png)
-- [Stress test throughput output](docs/screenshots/03-stress-test-output.png)
+### System
+- [Design diagram](docs/screenshots/system-design.png)
+- [LoadBalancer startup and initialization](docs/screenshots/lb-startup.png)
+- [Monitor autoscaling logs (scale up/down)](docs/screenshots/lb-autoscaling.png)
 
 ### Test Results
-- [Test 1 - Small load (5 requests, functional validation)](docs/screenshots/04-test1-small.png)
-- [Test 2 - Medium load (100 requests, stable processing)](docs/screenshots/05-test2-medium.png)
-- [Test 3 - Stress load (10K concurrent, 1419 req/sec)](docs/screenshots/06-test3-stress.png)
+- [Test - Small load (5 requests](docs/screenshots/user-small-test.png)
+- [Test - Stress load (10K concurrent)](docs/screenshots/user-stress-test.png)
 
 ---
 

@@ -123,11 +123,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="test_helper.h" />
     <ClInclude Include="user.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="test_helper.c" />
     <ClCompile Include="user.c" />
   </ItemGroup>
   <ItemGroup>
